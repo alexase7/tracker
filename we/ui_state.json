@@ -1,0 +1,22 @@
+{
+  "tree.ingredients": {
+    "name": 107,
+    "unit": 396,
+    "pack_qty": 282,
+    "pack_price": 171,
+    "unit_price": 106
+  },
+  "tree.prod": {
+    "name": 221,
+    "cost": 150,
+    "profit": 170,
+    "margin": 153
+  },
+  "tree.recipe": {
+    "ingredient": 270,
+    "qty": 217,
+    "unit": 165,
+    "unit_price": 244,
+    "line_cost": 202
+  }
+}
