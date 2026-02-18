@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+import webbrowser
+
 from .config import PAGE_SIZE
 from .ui_helpers import UIHelpers
 from .utils import money, safe_float
@@ -34,12 +36,34 @@ class ProductsTab(UIHelpers):
         outer_inner = ttk.Frame(outer, padding=10)
         outer_inner.pack(fill="both", expand=True)
 
+        # --- subtle credit icon (top-right) ---
+        self._credit_label = tk.Label(
+            self.app,
+            text="ⓘ",
+            fg="#777777",
+            bg=self.app["bg"],
+            font=("TkDefaultFont", 16, "bold")
+        )
+        self._credit_label.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=2)
+
+        self._credit_label.bind("<Enter>", self._show_credit_tooltip)
+        self._credit_label.bind("<Leave>", self._hide_credit_tooltip)
+        self._credit_label.bind("<Button-1>", self._open_github)
+        self._credit_label.configure(cursor="hand2")
+
         self.prod_paned = ttk.Panedwindow(
             outer_inner,
             orient="horizontal",
             style="Custom.Panedwindow",
         )
         self.prod_paned.pack(fill="both", expand=True)
+
+        # ensure credit label stays above all content
+        try:
+            self._credit_label.lift()
+            self._credit_label.tkraise()
+        except Exception:
+            pass
 
         left = ttk.Frame(self.prod_paned)
         right = ttk.Frame(self.prod_paned)
@@ -1406,3 +1430,43 @@ class ProductsTab(UIHelpers):
             self.on_ingredient_selected()
 
         self._update_margin_display(pid)
+    # ---------------- credit tooltip ----------------
+    def _show_credit_tooltip(self, event=None):
+        try:
+            if hasattr(self, "_credit_tooltip") and self._credit_tooltip:
+                return
+
+            self._credit_tooltip = tk.Toplevel(self.app)
+            self._credit_tooltip.wm_overrideredirect(True)
+            self._credit_tooltip.attributes("-topmost", True)
+
+            label = tk.Label(
+                self._credit_tooltip,
+                text="made by alexase7",
+                bg="#222222",
+                fg="#ffffff",
+                padx=8,
+                pady=4,
+                font=("TkDefaultFont", 9)
+            )
+            label.pack()
+
+            x = self._credit_label.winfo_rootx()
+            y = self._credit_label.winfo_rooty() + self._credit_label.winfo_height() + 4
+            self._credit_tooltip.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+    def _hide_credit_tooltip(self, event=None):
+        try:
+            if hasattr(self, "_credit_tooltip") and self._credit_tooltip:
+                self._credit_tooltip.destroy()
+                self._credit_tooltip = None
+        except Exception:
+            pass
+
+    def _open_github(self, event=None):
+        try:
+            webbrowser.open("https://github.com/alexase7")
+        except Exception:
+            pass
