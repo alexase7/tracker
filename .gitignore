@@ -1,0 +1,12 @@
+printf "\n# Local app data\nwareneinsatz.db\nwe/ui_state.json\n__pycache__/\n*.pyc\n" >> .gitignore
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Local app data
+wareneinsatz.db
+we/ui_state.json

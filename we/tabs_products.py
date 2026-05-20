@@ -126,6 +126,23 @@ class ProductsTab(UIHelpers):
         right_controls = ttk.Frame(search_row)
         right_controls.pack(side="right")
 
+        ttk.Label(right_controls, text="").pack(side="left", padx=(0, 4))
+        self.product_list_price_mode = tk.StringVar(value="net")
+        ttk.Radiobutton(
+            right_controls,
+            text="Brutto",
+            variable=self.product_list_price_mode,
+            value="gross",
+            command=self.refresh_products,
+        ).pack(side="left")
+        ttk.Radiobutton(
+            right_controls,
+            text="Netto",
+            variable=self.product_list_price_mode,
+            value="net",
+            command=self.refresh_products,
+        ).pack(side="left", padx=(2, 10))
+
         self.prod_page_label = ttk.Label(right_controls, text="")
         self.prod_page_label.pack(side="left", padx=(0, 6))
 
@@ -137,10 +154,13 @@ class ProductsTab(UIHelpers):
         cols = ("name", "cost", "profit", "margin")
         self.prod_tree = ttk.Treeview(left, columns=cols, show="headings", height=20, selectmode="browse")
 
-        self.prod_tree.heading("name", text="Produkt", command=lambda: self.sort_products_by("name"))
-        self.prod_tree.heading("cost", text="Kosten (WE)", command=lambda: self.sort_products_by("cost"))
-        self.prod_tree.heading("profit", text="Gewinn (€)", command=lambda: self.sort_products_by("profit"))
-        self.prod_tree.heading("margin", text="Marge (%)", command=lambda: self.sort_products_by("margin"))
+        self._product_heading_labels = {
+            "name": "Produkt",
+            "cost": "Kosten (WE)",
+            "profit": "Gewinn netto (€)",
+            "margin": "Marge netto (%)",
+        }
+        self._update_product_headings()
 
         self.prod_tree.column("name", width=220)
         self.prod_tree.column("cost", width=110, anchor="e")
@@ -166,10 +186,9 @@ class ProductsTab(UIHelpers):
         self.prod_name_entry.bind("<Return>", self._kb_prodname_return)
         self.prod_name_entry.bind("<Down>", self._kb_prodname_down)
         self.prod_name_entry.bind("<Up>", self._kb_prodname_up)
-        self.prod_name_entry.bind("<Control-BackSpace>", self._kb_delete_selected_product)
-        self.prod_name_entry.bind("<Command-BackSpace>", self._kb_delete_selected_product)
-        self.prod_name_entry.bind("<Control-d>", self._kb_delete_selected_product)
-        self.prod_name_entry.bind("<Command-d>", self._kb_delete_selected_product)
+        # Do not bind delete shortcuts here:
+        # Ctrl+BackSpace is normal text editing on Windows, and Delete/BackSpace
+        # should only delete products when the product list has focus.
         self.prod_name_entry.bind("<Escape>", self._kb_clear_product_name)
 
         # From product name entry, jump to recipe with Ctrl/Cmd+Right (keeps normal cursor movement)
@@ -323,19 +342,30 @@ class ProductsTab(UIHelpers):
         price_row = ttk.Frame(right)
         price_row.pack(fill="x", pady=(8, 0))
 
-        ttk.Label(price_row, text="Verkaufspreis (€):").pack(side="left")
+        ttk.Label(price_row, text="Verkaufspreis brutto (€):").pack(side="left")
         self.sale_price_var = tk.StringVar()
         self.sale_price_entry = ttk.Entry(price_row, textvariable=self.sale_price_var, width=12)
         self.sale_price_entry.pack(side="left", padx=(8, 12))
 
-        self.profit_label = ttk.Label(right, text="Gewinn: –")
+        ttk.Label(price_row, text="MwSt. (%):").pack(side="left")
+        self.vat_rate_var = tk.StringVar(value="19")
+        self.vat_rate_entry = ttk.Entry(price_row, textvariable=self.vat_rate_var, width=8)
+        self.vat_rate_entry.pack(side="left", padx=(8, 12))
+
+        self.net_price_label = ttk.Label(right, text="Netto-Verkaufspreis: –")
+        self.net_price_label.pack(anchor="e", pady=(6, 0))
+
+        self.profit_label = ttk.Label(right, text="Gewinn netto: –")
         self.profit_label.pack(anchor="e", pady=(6, 0))
 
-        self.margin_label = ttk.Label(right, text="Marge: –")
+        self.margin_label = ttk.Label(right, text="Marge netto: –")
         self.margin_label.pack(anchor="e", pady=(2, 0))
 
         self.sale_price_entry.bind("<Return>", lambda _e: (self.save_sale_price(), "break")[1])
         self.sale_price_entry.bind("<FocusOut>", lambda _e: self.save_sale_price())
+        self.vat_rate_entry.bind("<Return>", lambda _e: (self._update_margin_for_selected_product(), "break")[1])
+        self.vat_rate_entry.bind("<FocusOut>", lambda _e: self._update_margin_for_selected_product())
+        self.vat_rate_entry.bind("<KeyRelease>", lambda _e: self.refresh_products())
 
         self.on_add_mode_changed()
 
@@ -868,7 +898,22 @@ class ProductsTab(UIHelpers):
         else:
             self.prod_sort_col = col
             self.prod_sort_desc = False
+        self._update_product_headings()
         self.refresh_products()
+
+    def _update_product_headings(self):
+        labels = getattr(self, "_product_heading_labels", {})
+        sort_col = getattr(self, "prod_sort_col", "name")
+        desc = getattr(self, "prod_sort_desc", False)
+
+        for col in ("name", "cost", "profit", "margin"):
+            base = labels.get(col, col)
+            if col == sort_col:
+                arrow = "▼" if desc else "▲"
+                text = f"{base} {arrow}"
+            else:
+                text = base
+            self.prod_tree.heading(col, text=text, command=lambda c=col: self.sort_products_by(c))
 
     def _product_sort_key(self, row, col: str):
         _pid, name, cost, sale_price, profit, margin = row
@@ -881,6 +926,22 @@ class ProductsTab(UIHelpers):
         if col == "margin":
             return float(margin) if margin is not None else float("-inf")
         return (name or "").lower()
+
+    def _get_vat_rate(self) -> float:
+        vat_rate = safe_float(self.vat_rate_var.get())
+        if vat_rate is None or vat_rate < 0:
+            return 0.0
+        return float(vat_rate)
+
+    def _net_from_gross(self, gross_price: float) -> float:
+        vat_rate = self._get_vat_rate()
+        gross_price = float(gross_price)
+        if vat_rate <= 0:
+            return gross_price
+        return gross_price / (1.0 + (vat_rate / 100.0))
+
+    def _product_list_uses_net_prices(self) -> bool:
+        return getattr(self, "product_list_price_mode", tk.StringVar(value="net")).get() == "net"
 
     # ---------------- products list ----------------
     def _on_prod_search_changed(self):
@@ -933,6 +994,15 @@ class ProductsTab(UIHelpers):
         for pid, s in cur.fetchall():
             costs[int(pid)] += float(s or 0.0)
 
+        list_uses_net = self._product_list_uses_net_prices()
+        if list_uses_net:
+            self._product_heading_labels["profit"] = "Gewinn netto (€)"
+            self._product_heading_labels["margin"] = "Marge netto (%)"
+        else:
+            self._product_heading_labels["profit"] = "Gewinn brutto (€)"
+            self._product_heading_labels["margin"] = "Marge brutto (%)"
+        self._update_product_headings()
+
         rows_all = []
         for pid, name, sale_price in products:
             cost = float(costs.get(pid, 0.0))
@@ -940,9 +1010,10 @@ class ProductsTab(UIHelpers):
                 profit = None
                 margin = None
             else:
-                sp = float(sale_price)
-                profit = sp - cost
-                margin = (profit / sp * 100.0) if sp > 0 else 0.0
+                gross_price = float(sale_price)
+                comparison_price = self._net_from_gross(gross_price) if list_uses_net else gross_price
+                profit = comparison_price - cost
+                margin = (profit / comparison_price * 100.0) if comparison_price > 0 else 0.0
             rows_all.append((pid, name, cost, sale_price, profit, margin))
 
         self._products_rows = rows_all
@@ -1041,8 +1112,9 @@ class ProductsTab(UIHelpers):
             self.slot_pick.set("")
             self.slot_ing_pick.set("")
             self.sale_price_var.set("")
-            self.profit_label.config(text="Gewinn: –")
-            self.margin_label.config(text="Marge: –")
+            self.net_price_label.config(text="Netto-Verkaufspreis: –")
+            self.profit_label.config(text="Gewinn netto: –")
+            self.margin_label.config(text="Marge netto: –")
             return
 
         name = self.db.get_product_name(pid)
@@ -1083,20 +1155,33 @@ class ProductsTab(UIHelpers):
         self._update_margin_display(pid)
         self.refresh_products()
 
+    def _update_margin_for_selected_product(self):
+        pid = self._get_selected_product_id()
+        if pid is not None:
+            self._update_margin_display(pid)
+        self.refresh_products()
+
     def _update_margin_display(self, pid: int):
         cost = self.db.compute_product_cost(pid)
         price = self.db.get_sale_price(pid)
 
         if price is None:
-            self.profit_label.config(text="Gewinn: –")
-            self.margin_label.config(text="Marge: –")
+            self.net_price_label.config(text="Netto-Verkaufspreis: –")
+            self.profit_label.config(text="Gewinn netto: –")
+            self.margin_label.config(text="Marge netto: –")
             return
 
-        profit = float(price) - cost
-        margin_pct = (profit / float(price) * 100.0) if float(price) > 0 else 0.0
+        vat_rate = self._get_vat_rate()
 
-        self.profit_label.config(text=f"Gewinn: {money(profit)}")
-        self.margin_label.config(text=f"Marge: {margin_pct:.1f} %")
+        gross_price = float(price)
+        net_price = self._net_from_gross(gross_price)
+        vat_amount = gross_price - net_price
+        profit = net_price - cost
+        margin_pct = (profit / net_price * 100.0) if net_price > 0 else 0.0
+
+        self.net_price_label.config(text=f"Netto-Verkaufspreis: {money(net_price)} (MwSt.: {money(vat_amount)})")
+        self.profit_label.config(text=f"Gewinn netto: {money(profit)}")
+        self.margin_label.config(text=f"Marge netto: {margin_pct:.1f} %")
 
     # ---------------- autocomplete / ingredient resolve ----------------
     def _resolve_ingredient_name(self, typed_name: str):
