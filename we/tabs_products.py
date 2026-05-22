@@ -347,7 +347,7 @@ class ProductsTab(UIHelpers):
         self.sale_price_entry = ttk.Entry(price_row, textvariable=self.sale_price_var, width=12)
         self.sale_price_entry.pack(side="left", padx=(8, 12))
 
-        ttk.Label(price_row, text="MwSt. (%):").pack(side="left")
+        ttk.Label(price_row, text="MwSt. im Bruttopreis (%):").pack(side="left")
         self.vat_rate_var = tk.StringVar(value="19")
         self.vat_rate_entry = ttk.Entry(price_row, textvariable=self.vat_rate_var, width=8)
         self.vat_rate_entry.pack(side="left", padx=(8, 12))
@@ -363,9 +363,9 @@ class ProductsTab(UIHelpers):
 
         self.sale_price_entry.bind("<Return>", lambda _e: (self.save_sale_price(), "break")[1])
         self.sale_price_entry.bind("<FocusOut>", lambda _e: self.save_sale_price())
-        self.vat_rate_entry.bind("<Return>", lambda _e: (self._update_margin_for_selected_product(), "break")[1])
-        self.vat_rate_entry.bind("<FocusOut>", lambda _e: self._update_margin_for_selected_product())
-        self.vat_rate_entry.bind("<KeyRelease>", lambda _e: self.refresh_products())
+        self.vat_rate_entry.bind("<Return>", lambda _e: (self.save_vat_rate(), "break")[1])
+        self.vat_rate_entry.bind("<FocusOut>", lambda _e: self.save_vat_rate())
+        self.vat_rate_entry.bind("<KeyRelease>", lambda _e: self._preview_vat_rate_change())
 
         self.on_add_mode_changed()
 
@@ -933,9 +933,11 @@ class ProductsTab(UIHelpers):
             return 0.0
         return float(vat_rate)
 
-    def _net_from_gross(self, gross_price: float) -> float:
-        vat_rate = self._get_vat_rate()
+    def _net_from_gross(self, gross_price: float, vat_rate=None) -> float:
+        if vat_rate is None:
+            vat_rate = self._get_vat_rate()
         gross_price = float(gross_price)
+        vat_rate = float(vat_rate or 0.0)
         if vat_rate <= 0:
             return gross_price
         return gross_price / (1.0 + (vat_rate / 100.0))
@@ -967,7 +969,7 @@ class ProductsTab(UIHelpers):
 
         products = self.db.list_products()
 
-        costs = {pid: 0.0 for pid, _, _ in products}
+        costs = {pid: 0.0 for pid, *_rest in products}
         cur = self.db.conn.cursor()
 
         cur.execute(
@@ -1004,16 +1006,23 @@ class ProductsTab(UIHelpers):
         self._update_product_headings()
 
         rows_all = []
-        for pid, name, sale_price in products:
+        for row in products:
+            if len(row) >= 4:
+                pid, name, sale_price, vat_rate = row
+            else:
+                pid, name, sale_price = row
+                vat_rate = 19.0
+
             cost = float(costs.get(pid, 0.0))
             if sale_price is None:
                 profit = None
                 margin = None
             else:
                 gross_price = float(sale_price)
-                comparison_price = self._net_from_gross(gross_price) if list_uses_net else gross_price
+                comparison_price = self._net_from_gross(gross_price, vat_rate) if list_uses_net else gross_price
                 profit = comparison_price - cost
                 margin = (profit / comparison_price * 100.0) if comparison_price > 0 else 0.0
+
             rows_all.append((pid, name, cost, sale_price, profit, margin))
 
         self._products_rows = rows_all
@@ -1112,6 +1121,7 @@ class ProductsTab(UIHelpers):
             self.slot_pick.set("")
             self.slot_ing_pick.set("")
             self.sale_price_var.set("")
+            self.vat_rate_var.set("19")
             self.net_price_label.config(text="Netto-Verkaufspreis: –")
             self.profit_label.config(text="Gewinn netto: –")
             self.margin_label.config(text="Marge netto: –")
@@ -1133,6 +1143,32 @@ class ProductsTab(UIHelpers):
             self.sale_price_var.set("")
         else:
             self.sale_price_var.set(f"{float(price):.2f}")
+
+        try:
+            vat_rate = self.db.get_vat_rate(pid)
+        except Exception:
+            vat_rate = 19.0
+
+        self.vat_rate_var.set(f"{float(vat_rate):g}")
+
+    def save_vat_rate(self):
+        pid = self._get_selected_product_id()
+        if pid is None:
+            return
+
+        vat_rate = safe_float(self.vat_rate_var.get())
+        if vat_rate is None or vat_rate < 0:
+            vat_rate = 0.0
+
+        self.db.set_vat_rate(pid, float(vat_rate))
+        self.vat_rate_var.set(f"{float(vat_rate):g}")
+        self._update_margin_display(pid)
+        self.refresh_products()
+
+    def _preview_vat_rate_change(self):
+        pid = self._get_selected_product_id()
+        if pid is not None:
+            self._update_margin_display(pid)
 
     def save_sale_price(self):
         pid = self._get_selected_product_id()
@@ -1174,7 +1210,7 @@ class ProductsTab(UIHelpers):
         vat_rate = self._get_vat_rate()
 
         gross_price = float(price)
-        net_price = self._net_from_gross(gross_price)
+        net_price = self._net_from_gross(gross_price, vat_rate)
         vat_amount = gross_price - net_price
         profit = net_price - cost
         margin_pct = (profit / net_price * 100.0) if net_price > 0 else 0.0
